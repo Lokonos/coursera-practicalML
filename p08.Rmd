@@ -1,0 +1,160 @@
+---
+title: "Practical Machine Learning Project"
+author: "Henry Garcia"
+date: "15 August 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(gbm)
+```
+
+# 01. Problem definition (Question)
+
+Using smart devices is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+The objective of this work is to predict the manner in which people do exercises. We will use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants who were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+Data Source: Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
+
+# 02. Data assembly and preparation
+
+The data consist of two different sets: the history set and the prediction set. The data was loaded into R using the standard functions for loading data (read.csv). Blank cells were read as NAs.
+
+The data consist of 160 variables. There are a total of 19622 observations in the history set and 20 observations in the prediction set. Except for class and problem_id, all the column names are the same in the training and prediction sets.
+
+We removed variables that have mostly NA values and check variables for zero variance.
+
+```{r}
+### Loading the data
+data.history=read.csv("pml-history.csv", na.strings=c("NA",""), header = TRUE)
+data.prediction=read.csv("pml-prediction.csv", na.strings=c("NA",""), header = TRUE)
+
+#removing  NA columns
+data.history <- data.history[ , colSums(is.na(data.history)) == 0]
+data.prediction <- data.prediction[ , colSums(is.na(data.prediction)) == 0]
+
+### Checking that the colums names are identical in training and test sests. 
+c.data.history=colnames(data.history)
+c.data.prediction=colnames(data.prediction)
+all.equal(c.data.history[1:length(c.data.history)-1],c.data.prediction[1:length(c.data.prediction)-1])
+
+#Checking variables for near zero variance in the trining set
+nearZeroVar(data.history, saveMetrics=TRUE)
+```
+
+# 03. Feature Selection
+
+In terms of feature selection, we removed the first 7 covariates as they are not relevant to the problem. 
+
+We will use the remaining 52 covariates without further processing. These covariates are tidy and represent direct measurements of the system we want to study.
+
+```{r}
+#Removing the first 7 colums
+data.history <- data.history[,8:length(c.data.history)]
+data.prediction <- data.prediction[,8:length(c.data.prediction)]
+rm(c.data.history,c.data.prediction)
+```
+
+# 04. Algorithms
+
+The first decision we have to make is about using unsupervised versus supervise learning. Since we want to predict results for a new data set, we will use supervised learning.
+
+The second decision is about the type of algorithms that we would like to try. Predicting a categorical variable from numerical data is a classification problem. 
+
+Therefore, we will use algorithms for classification. First, we will try singular models like decision tree and k-NN, and then ensemble models like gradient boosting classification and random forest.
+
+## 04.01 Setting up the training data.
+
+First, we set the seed to make sure we can reproduce the results later on.
+
+Then, we will split the historical data into a training set (60%) and a testing set(40%). This will allow us to have an indication of the out-of-sample error. 
+
+Finally, we set the training control variable to use k-Fold cross-validation. This will allow getting a good bias-variance trade-off for the models. We limit the cross-validation to 4-Fold to avoid long run times during the training process.
+
+
+```{r}
+set.seed(12345)
+inTrain <- createDataPartition(y=data.history$classe, p=0.6, list=FALSE)
+training <- data.history[inTrain,]
+testing <- data.history[-inTrain,]
+train_control <- trainControl(method="cv", number=4)
+```
+
+## 04.02 Decision Tree
+
+We use the training set to create a decision tree.  Then, we use the model to predict the class in the testing set and calculate the out-of-sample error via a confusion matrix. 
+
+```{r}
+#Training the model
+model.tree <- train(classe ~ .,data=training, trControl=train_control,method="rpart")
+print(model.tree)
+
+#Calculating out sample error with testing set
+model.tree.predictions=predict(model.tree, newdata=testing)
+model.tree.results <- confusionMatrix(data=model.tree.predictions, reference=testing$classe)
+print(model.tree.results)
+```
+
+
+## 04.03 k-NN
+
+We use the training set to create a k-nearest neighbour model. We need to specify the parameter PreProcess to normalize the data. Then, we use the best model to predict in the testing set and calculate the out-of-sample error via a confusion matrix.
+
+```{r}
+#Training the model
+model.knn <- train(classe ~ .,data=training, trControl=train_control,method="knn", preProcess = c("center", "scale"), tuneLength = 10)
+print(model.knn)
+
+#Calculating out sample error with testing set
+model.knn.predictions=predict(model.knn, newdata=testing)
+model.knn.results <- confusionMatrix(data=model.knn.predictions, reference=testing$classe)
+print(model.knn.results)
+```
+
+## 04.04 Boosting: Gradient Boosting Classification
+
+Now, we proceed to train ensemble models. The first model is gradient boosting with trees. We used the training data to train the model. Then, we predicted the class for the testing set and calculated the out-of-sample error via a confusion matrix. 
+
+```{r}
+#Training the model
+model.gb <- train(classe ~ .,data=training, trControl=train_control, method="gbm")
+print(model.gb)
+
+#Calculating out sample error with testing set
+model.gb.predictions=predict(model.gb, newdata=testing)
+model.gb.results <- confusionMatrix(data=model.gb.predictions, reference=testing$classe)
+print(model.gb.results)
+```
+
+
+## 04.05 Bagging: Random Forest
+
+Finally, we proceed to train the second ensemble model. This time we use the training data to train a random forest. Then, we used the best model to predict the class of the testing set and calculated the out-of-sample error via a confusion matrix. 
+
+```{r}
+#Training the model
+model.rf <- train(classe ~ .,data=training, trControl=train_control, method="rf", prox=TRUE)
+print(model.rf)
+
+#Calculating out sample error with testing set
+model.rf.predictions=predict(model.rf, newdata=testing)
+model.rf.results <- confusionMatrix(data=model.rf.predictions, reference=testing$classe)
+print(model.rf.results)
+```
+
+# 05. Prediction and conclusions.
+
+The out-of-sample errors indicate that the random forest yields the best results.  So, we use this algorithm to predict the class of the 20 people in the prediction set. 
+
+```{r}
+final.predictions=predict(model.rf, newdata=data.prediction)
+final.predictions
+```
+
+
+This project demonstrates the importance of testing different algorithms as they have different levels of accuracy and run time. Also, it is important to decide early on what is an acceptable rate of error because it will help with the selection and training of the algorithms. 
